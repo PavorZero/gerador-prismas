@@ -6,7 +6,13 @@ import os
 import copy
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 
+
+# ============================================================
+# FUNÇÕES AUXILIARES
+# ============================================================
+
 def duplicate_slide(presentation, index):
+    """Duplica o slide preservando imagens, fontes, formatos e posições."""
     source = presentation.slides[index]
     dest = presentation.slides.add_slide(source.slide_layout)
 
@@ -56,30 +62,66 @@ def delete_slide(presentation, index):
     xml_slides.remove(slides[index])
 
 
-def substitute_text_in_slide(slide, substituicoes):
-    def process_text_frame(tf):
+def substitute_text_in_slide(slide, substituicoes, campos_para_limpar=None, apagar_shape=False):
+    """
+    substituicoes: dict { 'NOME': 'João', 'CARGO': 'Diretor', 'EMPRESA': 'ACME' }
+    campos_para_limpar: lista de chaves cujo texto deve ser apagado do slide.
+    apagar_shape: se True, remove a caixa inteira quando ela só contém a palavra-chave.
+    """
+    campos_para_limpar = campos_para_limpar or []
+    chaves_limpar_upper = [c.upper() for c in campos_para_limpar]
+
+    def substituir_no_run(run, subs):
+        texto = run.text
+        for chave, valor in subs.items():
+            texto = texto.replace(chave, str(valor))
+            texto = texto.replace(chave.capitalize(), str(valor))
+            texto = texto.replace(chave.lower(), str(valor))
+        run.text = texto
+
+    def limpar_no_run(run, chaves):
+        texto = run.text
+        for chave in chaves:
+            for variacao in (chave, chave.capitalize(), chave.lower()):
+                if variacao in texto:
+                    texto = texto.replace(variacao, "")
+        run.text = texto
+
+    def processar_text_frame(tf):
         for paragraph in tf.paragraphs:
             for run in paragraph.runs:
-                texto = run.text
-                for chave, valor in substituicoes.items():
-                    texto = texto.replace(chave, str(valor))
-                    texto = texto.replace(chave.capitalize(), str(valor))
-                    texto = texto.replace(chave.lower(), str(valor))
-                run.text = texto
+                substituir_no_run(run, substituicoes)
+                limpar_no_run(run, chaves_limpar_upper)
 
-    def process_shape(shape):
+    def processar_shape(shape):
+        # Verifica se o shape só contém palavra(s) a limpar
+        if shape.has_text_frame and chaves_limpar_upper:
+            texto_shape = shape.text_frame.text.upper()
+            contem_limpar = any(chave in texto_shape for chave in chaves_limpar_upper)
+
+            if contem_limpar and apagar_shape:
+                texto_restante = texto_shape
+                for chave in chaves_limpar_upper:
+                    texto_restante = texto_restante.replace(chave, "")
+                # Se só sobrou espaço/símbolos, apaga o shape inteiro
+                if not texto_restante.strip(" \t\n\r-:|·•"):
+                    shape._element.getparent().remove(shape._element)
+                    return
+
         if shape.has_text_frame:
-            process_text_frame(shape.text_frame)
+            processar_text_frame(shape.text_frame)
+
         if shape.has_table:
             for row in shape.table.rows:
                 for cell in row.cells:
-                    process_text_frame(cell.text_frame)
-        if shape.shape_type == 6:  # GROUP
-            for sub in shape.shapes:
-                process_shape(sub)
+                    processar_text_frame(cell.text_frame)
 
-    for shape in slide.shapes:
-        process_shape(shape)
+        if shape.shape_type == 6:  # GROUP
+            for sub in list(shape.shapes):
+                processar_shape(sub)
+
+    for shape in list(slide.shapes):
+        processar_shape(shape)
 
 
 # ============================================================
@@ -89,7 +131,7 @@ def substitute_text_in_slide(slide, substituicoes):
 st.set_page_config(page_title="Gerador de Prismas", page_icon="🔷", layout="centered")
 
 st.title("🔷 Gerador de Prismas")
-st.caption("Versão Web 1.1 - Criado por João Carlos")
+st.caption("Versão Web 1.2 - Criado por João Carlos")
 
 st.markdown("---")
 
@@ -124,6 +166,20 @@ with col2:
     cargo_col = st.selectbox("Cargo (opcional)", colunas, index=0)
 with col3:
     empresa_col = st.selectbox("Empresa", colunas, index=0)
+
+st.markdown("**Comportamento dos campos não usados**")
+st.caption(
+    "Se você não mapear uma coluna, os textos correspondentes (NOME, CARGO, EMPRESA) "
+    "serão removidos do PPT gerado."
+)
+apagar_shape_vazio = st.checkbox(
+    "Apagar a caixa de texto inteira (em vez de apenas o texto)",
+    value=False,
+    help=(
+        "Marcado: se a caixa só continha 'CARGO', ela desaparece, deixando o layout mais limpo. "
+        "Desmarcado: o texto é apagado mas a caixa permanece no lugar."
+    ),
+)
 
 # PASSO 3: Escolha do template
 st.subheader("3️⃣ Template PowerPoint")
@@ -193,10 +249,21 @@ if st.button("🚀 GERAR PRISMAS", type="primary", use_container_width=True):
 
         status.info(f"⚙️ Gerando {total} prisma(s)...")
 
+        # Duplica o slide 0 (template) N vezes
         for i in range(total):
             duplicate_slide(prs, 0)
             progress.progress((i + 1) / (total * 2))
 
+        # Descobre quais campos NÃO foram mapeados (devem ser limpos)
+        campos_para_limpar = []
+        if not nome_col:
+            campos_para_limpar.append("NOME")
+        if not cargo_col:
+            campos_para_limpar.append("CARGO")
+        if not empresa_col:
+            campos_para_limpar.append("EMPRESA")
+
+        # Substitui os textos nos slides duplicados
         for idx, (_, row) in enumerate(df.iterrows(), start=1):
             slide = prs.slides[idx]
             subs = {}
@@ -206,11 +273,19 @@ if st.button("🚀 GERAR PRISMAS", type="primary", use_container_width=True):
                 subs["CARGO"] = row[cargo_col]
             if empresa_col:
                 subs["EMPRESA"] = row[empresa_col]
-            substitute_text_in_slide(slide, subs)
+
+            substitute_text_in_slide(
+                slide,
+                subs,
+                campos_para_limpar=campos_para_limpar,
+                apagar_shape=apagar_shape_vazio,
+            )
             progress.progress((total + idx) / (total * 2))
 
+        # Remove o slide original
         delete_slide(prs, 0)
 
+        # Salva PPTX em memória
         status.info("💾 Preparando arquivo PowerPoint...")
         output_pptx = io.BytesIO()
         prs.save(output_pptx)
