@@ -6,11 +6,6 @@ import os
 import copy
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 
-
-# ============================================================
-# FUNÇÕES AUXILIARES
-# ============================================================
-
 def duplicate_slide(presentation, index):
     """Duplica o slide preservando imagens, fontes, formatos e posições."""
     source = presentation.slides[index]
