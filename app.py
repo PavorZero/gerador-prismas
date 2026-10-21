@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from pptx import Presentation
+from pptx.util import Pt, Cm
 import io
 import os
 import copy
@@ -12,7 +13,6 @@ from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 # ============================================================
 
 def duplicate_slide(presentation, index):
-    """Duplica o slide preservando imagens, fontes, formatos e posições."""
     source = presentation.slides[index]
     dest = presentation.slides.add_slide(source.slide_layout)
 
@@ -62,22 +62,25 @@ def delete_slide(presentation, index):
     xml_slides.remove(slides[index])
 
 
-def substitute_text_in_slide(slide, substituicoes, campos_para_limpar=None, apagar_shape=False):
-    """
-    substituicoes: dict { 'NOME': 'João', 'CARGO': 'Diretor', 'EMPRESA': 'ACME' }
-    campos_para_limpar: lista de chaves cujo texto deve ser apagado do slide.
-    apagar_shape: se True, remove a caixa inteira quando ela só contém a palavra-chave.
-    """
+def substitute_text_in_slide(slide, substituicoes, campos_para_limpar=None, apagar_shape=False, font_size=None):
     campos_para_limpar = campos_para_limpar or []
     chaves_limpar_upper = [c.upper() for c in campos_para_limpar]
 
     def substituir_no_run(run, subs):
         texto = run.text
+        alterou = False
         for chave, valor in subs.items():
-            texto = texto.replace(chave, str(valor))
-            texto = texto.replace(chave.capitalize(), str(valor))
-            texto = texto.replace(chave.lower(), str(valor))
+            if chave in texto or chave.capitalize() in texto or chave.lower() in texto:
+                texto = texto.replace(chave, str(valor))
+                texto = texto.replace(chave.capitalize(), str(valor))
+                texto = texto.replace(chave.lower(), str(valor))
+                alterou = True
+        
         run.text = texto
+        
+        # Se alterou o texto e o usuário definiu um tamanho de fonte, aplica
+        if alterou and font_size is not None:
+            run.font.size = Pt(font_size)
 
     def limpar_no_run(run, chaves):
         texto = run.text
@@ -94,7 +97,6 @@ def substitute_text_in_slide(slide, substituicoes, campos_para_limpar=None, apag
                 limpar_no_run(run, chaves_limpar_upper)
 
     def processar_shape(shape):
-        # Verifica se o shape só contém palavra(s) a limpar
         if shape.has_text_frame and chaves_limpar_upper:
             texto_shape = shape.text_frame.text.upper()
             contem_limpar = any(chave in texto_shape for chave in chaves_limpar_upper)
@@ -103,7 +105,6 @@ def substitute_text_in_slide(slide, substituicoes, campos_para_limpar=None, apag
                 texto_restante = texto_shape
                 for chave in chaves_limpar_upper:
                     texto_restante = texto_restante.replace(chave, "")
-                # Se só sobrou espaço/símbolos, apaga o shape inteiro
                 if not texto_restante.strip(" \t\n\r-:|·•"):
                     shape._element.getparent().remove(shape._element)
                     return
@@ -131,7 +132,7 @@ def substitute_text_in_slide(slide, substituicoes, campos_para_limpar=None, apag
 st.set_page_config(page_title="Gerador de Prismas", page_icon="🔷", layout="centered")
 
 st.title("🔷 Gerador de Prismas")
-st.caption("Versão Web 1.2 - Criado por João Carlos")
+st.caption("Versão Web 1.3 - Criado por João Carlos")
 
 st.markdown("---")
 
@@ -151,7 +152,7 @@ except Exception as e:
     st.error(f"Erro ao ler Excel: {e}")
     st.stop()
 
-# PASSO 2: Escolher aba
+# PASSO 2: Escolher aba e Mapeamento
 st.subheader("2️⃣ Selecionar Aba")
 selected_sheet = st.selectbox("Aba do Excel", sheet_names)
 
@@ -167,22 +168,29 @@ with col2:
 with col3:
     empresa_col = st.selectbox("Empresa", colunas, index=0)
 
-st.markdown("**Comportamento dos campos não usados**")
-st.caption(
-    "Se você não mapear uma coluna, os textos correspondentes (NOME, CARGO, EMPRESA) "
-    "serão removidos do PPT gerado."
-)
-apagar_shape_vazio = st.checkbox(
-    "Apagar a caixa de texto inteira (em vez de apenas o texto)",
-    value=False,
-    help=(
-        "Marcado: se a caixa só continha 'CARGO', ela desaparece, deixando o layout mais limpo. "
-        "Desmarcado: o texto é apagado mas a caixa permanece no lugar."
-    ),
-)
+# --- NOVIDADE: Configuração de Fonte ---
+st.markdown("**Configurações de Texto e Layout**")
+col_conf1, col_conf2 = st.columns(2)
+with col_conf1:
+    apagar_shape_vazio = st.checkbox("Apagar caixa se não usada", value=False, help="Remove a caixa de texto inteira se ela só continha o campo vazio (ex: apenas a palavra CARGO).")
+with col_conf2:
+    usar_tamanho_custom = st.checkbox("Alterar tamanho da fonte")
+    
+font_size = None
+if usar_tamanho_custom:
+    font_size = st.slider("Tamanho da fonte (Pt)", min_value=8, max_value=100, value=24, step=2, help="Aplicado apenas aos campos substituídos (Nome, Cargo, Empresa).")
 
-# PASSO 3: Escolha do template
-st.subheader("3️⃣ Template PowerPoint")
+st.markdown("---")
+
+# PASSO 3: Formato e Template
+st.subheader("3️⃣ Formato e Template")
+
+# NOVIDADE: Seleção de Tamanho
+formato_prisma = st.radio(
+    "Selecione o formato do prisma:",
+    ["21x14,5 cm", "30x10,5 cm"],
+    horizontal=True
+)
 
 modo_template = st.radio(
     "Como deseja escolher o template?",
@@ -191,30 +199,37 @@ modo_template = st.radio(
 )
 
 TEMPLATES_PADRAO = {
-    "SESI": "templates/sesi.pptx",
-    "SENAI": "templates/senai.pptx",
-    "CNI": "templates/cni.pptx",
-    "IEL": "templates/iel.pptx",
-    "Sistema Indústria": "templates/sistema_industria.pptx",
+    "SESI": "sesi.pptx",
+    "SENAI": "senai.pptx",
+    "CNI": "cni.pptx",
+    "IEL": "iel.pptx",
+    "Sistema Indústria": "sistema_industria.pptx",
 }
+
+pasta_tamanho = "21x14.5" if formato_prisma == "21x14,5 cm" else "30x10.5"
 
 template_file = None
 template_path = None
 nome_template = None
+forcar_redimensionamento = False
 
 if modo_template == "Usar template padrão":
     nome_template = st.selectbox("Escolha o modelo", list(TEMPLATES_PADRAO.keys()))
-    template_path = TEMPLATES_PADRAO[nome_template]
+    # O caminho agora inclui a pasta de formato!
+    template_path = os.path.join("templates", pasta_tamanho, TEMPLATES_PADRAO[nome_template])
 
     if os.path.exists(template_path):
-        st.success(f"✅ Template **{nome_template}** carregado")
+        st.success(f"✅ Template **{nome_template}** ({formato_prisma}) carregado")
     else:
-        st.error(
-            f"❌ Arquivo `{template_path}` não encontrado.\n\n"
-            "Verifique se o arquivo está na pasta `templates/` do projeto."
-        )
+        st.error(f"❌ Arquivo `{template_path}` não encontrado. Verifique a pasta.")
 else:
     template_file = st.file_uploader("Envie o template .pptx", type=["pptx"])
+    if template_file:
+        forcar_redimensionamento = st.checkbox(
+            f"Forçar redimensionamento para {formato_prisma}", 
+            value=False,
+            help="⚠️ Cuidado: isso vai esticar ou comprimir o slide. Imagens e logos podem distorcer."
+        )
 
 st.markdown("---")
 
@@ -241,6 +256,15 @@ if st.button("🚀 GERAR PRISMAS", type="primary", use_container_width=True):
                 st.stop()
             template_bytes = io.BytesIO(template_file.read())
             prs = Presentation(template_bytes)
+            
+            # NOVIDADE: Forçar redimensionamento para template personalizado
+            if forcar_redimensionamento:
+                if formato_prisma == "21x14,5 cm":
+                    prs.slide_width = Cm(21)
+                    prs.slide_height = Cm(14.5)
+                else:
+                    prs.slide_width = Cm(30)
+                    prs.slide_height = Cm(10.5)
 
         total = len(df)
         if total == 0:
@@ -249,12 +273,10 @@ if st.button("🚀 GERAR PRISMAS", type="primary", use_container_width=True):
 
         status.info(f"⚙️ Gerando {total} prisma(s)...")
 
-        # Duplica o slide 0 (template) N vezes
         for i in range(total):
             duplicate_slide(prs, 0)
             progress.progress((i + 1) / (total * 2))
 
-        # Descobre quais campos NÃO foram mapeados (devem ser limpos)
         campos_para_limpar = []
         if not nome_col:
             campos_para_limpar.append("NOME")
@@ -263,7 +285,6 @@ if st.button("🚀 GERAR PRISMAS", type="primary", use_container_width=True):
         if not empresa_col:
             campos_para_limpar.append("EMPRESA")
 
-        # Substitui os textos nos slides duplicados
         for idx, (_, row) in enumerate(df.iterrows(), start=1):
             slide = prs.slides[idx]
             subs = {}
@@ -279,13 +300,12 @@ if st.button("🚀 GERAR PRISMAS", type="primary", use_container_width=True):
                 subs,
                 campos_para_limpar=campos_para_limpar,
                 apagar_shape=apagar_shape_vazio,
+                font_size=font_size # <-- Passando o tamanho da fonte
             )
             progress.progress((total + idx) / (total * 2))
 
-        # Remove o slide original
         delete_slide(prs, 0)
 
-        # Salva PPTX em memória
         status.info("💾 Preparando arquivo PowerPoint...")
         output_pptx = io.BytesIO()
         prs.save(output_pptx)
@@ -298,7 +318,7 @@ if st.button("🚀 GERAR PRISMAS", type="primary", use_container_width=True):
         st.download_button(
             label="📥 Baixar PowerPoint (.pptx)",
             data=pptx_bytes,
-            file_name="prismas_gerados.pptx",
+            file_name=f"prismas_{formato_prisma.replace(',','.').replace(' ','')}.pptx",
             mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
             use_container_width=True,
         )
