@@ -62,25 +62,23 @@ def delete_slide(presentation, index):
     xml_slides.remove(slides[index])
 
 
-def substitute_text_in_slide(slide, substituicoes, campos_para_limpar=None, apagar_shape=False, font_size=None):
+def substitute_text_in_slide(slide, substituicoes, campos_para_limpar=None, apagar_shape=False, font_sizes=None):
     campos_para_limpar = campos_para_limpar or []
+    font_sizes = font_sizes or {}
     chaves_limpar_upper = [c.upper() for c in campos_para_limpar]
 
     def substituir_no_run(run, subs):
         texto = run.text
-        alterou = False
         for chave, valor in subs.items():
             if chave in texto or chave.capitalize() in texto or chave.lower() in texto:
                 texto = texto.replace(chave, str(valor))
                 texto = texto.replace(chave.capitalize(), str(valor))
                 texto = texto.replace(chave.lower(), str(valor))
-                alterou = True
-        
+                
+                # Aplica o tamanho da fonte específico para esta chave, se definido
+                if chave in font_sizes and font_sizes[chave]:
+                    run.font.size = Pt(font_sizes[chave])
         run.text = texto
-        
-        # Se alterou o texto e o usuário definiu um tamanho de fonte, aplica
-        if alterou and font_size is not None:
-            run.font.size = Pt(font_size)
 
     def limpar_no_run(run, chaves):
         texto = run.text
@@ -132,7 +130,7 @@ def substitute_text_in_slide(slide, substituicoes, campos_para_limpar=None, apag
 st.set_page_config(page_title="Gerador de Prismas", page_icon="🔷", layout="centered")
 
 st.title("🔷 Gerador de Prismas")
-st.caption("Versão Web 1.3 - Criado por João Carlos")
+st.caption("Versão Web 1.4 - Criado por João Carlos")
 
 st.markdown("---")
 
@@ -168,24 +166,33 @@ with col2:
 with col3:
     empresa_col = st.selectbox("Empresa", colunas, index=0)
 
-# --- NOVIDADE: Configuração de Fonte ---
+# --- NOVIDADE: Configurações de Fonte Separadas ---
 st.markdown("**Configurações de Texto e Layout**")
-col_conf1, col_conf2 = st.columns(2)
-with col_conf1:
-    apagar_shape_vazio = st.checkbox("Apagar caixa se não usada", value=False, help="Remove a caixa de texto inteira se ela só continha o campo vazio (ex: apenas a palavra CARGO).")
-with col_conf2:
-    usar_tamanho_custom = st.checkbox("Alterar tamanho da fonte")
-    
-font_size = None
-if usar_tamanho_custom:
-    font_size = st.slider("Tamanho da fonte (Pt)", min_value=8, max_value=100, value=24, step=2, help="Aplicado apenas aos campos substituídos (Nome, Cargo, Empresa).")
+apagar_shape_vazio = st.checkbox("Apagar caixa de texto inteira se o campo não for usado", value=False)
+
+font_sizes = {}
+f_col1, f_col2, f_col3 = st.columns(3)
+
+with f_col1:
+    if nome_col:
+        if st.checkbox("Alterar fonte do Nome"):
+            font_sizes["NOME"] = st.number_input("Tamanho Nome (Pt)", min_value=8, max_value=150, value=28, step=1)
+
+with f_col2:
+    if cargo_col:
+        if st.checkbox("Alterar fonte do Cargo"):
+            font_sizes["CARGO"] = st.number_input("Tamanho Cargo (Pt)", min_value=8, max_value=150, value=18, step=1)
+
+with f_col3:
+    if empresa_col:
+        if st.checkbox("Alterar fonte da Empresa"):
+            font_sizes["EMPRESA"] = st.number_input("Tamanho Empresa (Pt)", min_value=8, max_value=150, value=18, step=1)
 
 st.markdown("---")
 
 # PASSO 3: Formato e Template
 st.subheader("3️⃣ Formato e Template")
 
-# NOVIDADE: Seleção de Tamanho
 formato_prisma = st.radio(
     "Selecione o formato do prisma:",
     ["21x14,5 cm", "30x10,5 cm"],
@@ -215,7 +222,6 @@ forcar_redimensionamento = False
 
 if modo_template == "Usar template padrão":
     nome_template = st.selectbox("Escolha o modelo", list(TEMPLATES_PADRAO.keys()))
-    # O caminho agora inclui a pasta de formato!
     template_path = os.path.join("templates", pasta_tamanho, TEMPLATES_PADRAO[nome_template])
 
     if os.path.exists(template_path):
@@ -257,7 +263,6 @@ if st.button("🚀 GERAR PRISMAS", type="primary", use_container_width=True):
             template_bytes = io.BytesIO(template_file.read())
             prs = Presentation(template_bytes)
             
-            # NOVIDADE: Forçar redimensionamento para template personalizado
             if forcar_redimensionamento:
                 if formato_prisma == "21x14,5 cm":
                     prs.slide_width = Cm(21)
@@ -300,7 +305,7 @@ if st.button("🚀 GERAR PRISMAS", type="primary", use_container_width=True):
                 subs,
                 campos_para_limpar=campos_para_limpar,
                 apagar_shape=apagar_shape_vazio,
-                font_size=font_size # <-- Passando o tamanho da fonte
+                font_sizes=font_sizes # Passando o dicionário com tamanhos individuais
             )
             progress.progress((total + idx) / (total * 2))
 
