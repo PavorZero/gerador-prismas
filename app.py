@@ -12,6 +12,81 @@ from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 # FUNÇÕES AUXILIARES
 # ============================================================
 
+def adjust_vertical_centering(slide, missing_fields):
+    """
+    Se um dos campos (NOME, CARGO, EMPRESA) não for usado, 
+    reposiciona as caixas restantes para ficarem centralizadas 
+    verticalmente no espaço original.
+    """
+    s_nome, s_cargo, s_empresa = None, None, None
+
+    # Procura as caixas de texto no slide (incluindo dentro de grupos)
+    def find_shapes(shapes):
+        nonlocal s_nome, s_cargo, s_empresa
+        for s in shapes:
+            if s.has_text_frame:
+                txt = s.text_frame.text.upper()
+                if "NOME" in txt: s_nome = s
+                if "CARGO" in txt: s_cargo = s
+                if "EMPRESA" in txt: s_empresa = s
+            if s.shape_type == 6:  # GROUP
+                find_shapes(s.shapes)
+
+    find_shapes(slide.shapes)
+
+    # Se o template não tiver as 3 caixas separadas, não há como ajustar
+    if not (s_nome and s_cargo and s_empresa):
+        return
+        
+    # Se as 3 palavras estiverem na mesma caixa (não são shapes separados), não movemos
+    if s_nome == s_cargo or s_nome == s_empresa or s_cargo == s_empresa:
+        return
+
+    # Calcula o centro vertical do bloco original
+    y_min = min(s_nome.top, s_cargo.top, s_empresa.top)
+    y_max = max(s_nome.top + s_nome.height, s_cargo.top + s_cargo.height, s_empresa.top + s_empresa.height)
+    center_y = y_min + (y_max - y_min) / 2
+
+    # Calcula os espaçamentos originais entre as caixas
+    gap1 = max(0, s_cargo.top - (s_nome.top + s_nome.height))
+    gap2 = max(0, s_empresa.top - (s_cargo.top + s_cargo.height))
+    avg_gap = (gap1 + gap2) / 2  # Usa a média dos espaçamentos
+
+    # Aplica o novo posicionamento dependendo do que está faltando
+    if "CARGO" in missing_fields and "NOME" not in missing_fields and "EMPRESA" not in missing_fields:
+        # Ficam NOME e EMPRESA
+        total_h = s_nome.height + s_empresa.height + avg_gap
+        new_top = int(center_y - (total_h / 2))
+        s_nome.top = new_top
+        s_empresa.top = int(new_top + s_nome.height + avg_gap)
+
+    elif "EMPRESA" in missing_fields and "NOME" not in missing_fields and "CARGO" not in missing_fields:
+        # Ficam NOME e CARGO
+        total_h = s_nome.height + s_cargo.height + gap1
+        new_top = int(center_y - (total_h / 2))
+        s_nome.top = new_top
+        s_cargo.top = int(new_top + s_nome.height + gap1)
+
+    elif "NOME" in missing_fields and "CARGO" not in missing_fields and "EMPRESA" not in missing_fields:
+        # Ficam CARGO e EMPRESA
+        total_h = s_cargo.height + s_empresa.height + gap2
+        new_top = int(center_y - (total_h / 2))
+        s_cargo.top = new_top
+        s_empresa.top = int(new_top + s_cargo.height + gap2)
+
+    elif "NOME" in missing_fields and "CARGO" in missing_fields:
+        # Fica só EMPRESA
+        s_empresa.top = int(center_y - (s_empresa.height / 2))
+
+    elif "NOME" in missing_fields and "EMPRESA" in missing_fields:
+        # Fica só CARGO
+        s_cargo.top = int(center_y - (s_cargo.height / 2))
+
+    elif "CARGO" in missing_fields and "EMPRESA" in missing_fields:
+        # Fica só NOME
+        s_nome.top = int(center_y - (s_nome.height / 2))
+
+
 def duplicate_slide(presentation, index):
     source = presentation.slides[index]
     dest = presentation.slides.add_slide(source.slide_layout)
@@ -65,6 +140,10 @@ def delete_slide(presentation, index):
 def substitute_text_in_slide(slide, substituicoes, campos_para_limpar=None, apagar_shape=False, font_sizes=None):
     campos_para_limpar = campos_para_limpar or []
     font_sizes = font_sizes or {}
+    
+    # --- NOVO: Ajusta o layout antes de apagar/substituir os textos ---
+    adjust_vertical_centering(slide, campos_para_limpar)
+
     chaves_limpar_upper = [c.upper() for c in campos_para_limpar]
 
     def substituir_no_run(run, subs):
@@ -75,7 +154,6 @@ def substitute_text_in_slide(slide, substituicoes, campos_para_limpar=None, apag
                 texto = texto.replace(chave.capitalize(), str(valor))
                 texto = texto.replace(chave.lower(), str(valor))
                 
-                # Aplica o tamanho da fonte específico para esta chave, se definido
                 if chave in font_sizes and font_sizes[chave]:
                     run.font.size = Pt(font_sizes[chave])
         run.text = texto
@@ -130,7 +208,7 @@ def substitute_text_in_slide(slide, substituicoes, campos_para_limpar=None, apag
 st.set_page_config(page_title="Gerador de Prismas", page_icon="🔷", layout="centered")
 
 st.title("🔷 Gerador de Prismas")
-st.caption("Versão Web 1.4 - Criado por João Carlos")
+st.caption("Versão Web 1.5 - Criado por João Carlos")
 
 st.markdown("---")
 
@@ -166,9 +244,9 @@ with col2:
 with col3:
     empresa_col = st.selectbox("Empresa", colunas, index=0)
 
-# --- NOVIDADE: Configurações de Fonte Separadas ---
+# --- Configurações de Fonte Separadas ---
 st.markdown("**Configurações de Texto e Layout**")
-apagar_shape_vazio = st.checkbox("Apagar caixa de texto inteira se o campo não for usado", value=False)
+apagar_shape_vazio = st.checkbox("Apagar caixa de texto inteira se o campo não for usado", value=False, help="Se desmarcado, a caixa fica vazia, mas o texto que sobrar é centralizado automaticamente.")
 
 font_sizes = {}
 f_col1, f_col2, f_col3 = st.columns(3)
@@ -305,7 +383,7 @@ if st.button("🚀 GERAR PRISMAS", type="primary", use_container_width=True):
                 subs,
                 campos_para_limpar=campos_para_limpar,
                 apagar_shape=apagar_shape_vazio,
-                font_sizes=font_sizes # Passando o dicionário com tamanhos individuais
+                font_sizes=font_sizes
             )
             progress.progress((total + idx) / (total * 2))
 
