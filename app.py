@@ -13,14 +13,9 @@ from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 # ============================================================
 
 def adjust_vertical_centering(slide, missing_fields):
-    """
-    Se um dos campos (NOME, CARGO, EMPRESA) não for usado, 
-    reposiciona as caixas restantes para ficarem centralizadas 
-    verticalmente no espaço original.
-    """
+    """Força a ordem NOME -> CARGO -> EMPRESA e centraliza no espaço original."""
     s_nome, s_cargo, s_empresa = None, None, None
 
-    # Procura as caixas de texto no slide (incluindo dentro de grupos)
     def find_shapes(shapes):
         nonlocal s_nome, s_cargo, s_empresa
         for s in shapes:
@@ -34,11 +29,9 @@ def adjust_vertical_centering(slide, missing_fields):
 
     find_shapes(slide.shapes)
 
-    # Se o template não tiver as 3 caixas separadas, não há como ajustar
+    # Se não tiver as 3 caixas separadas, não há como forçar a ordem
     if not (s_nome and s_cargo and s_empresa):
         return
-        
-    # Se as 3 palavras estiverem na mesma caixa (não são shapes separados), não movemos
     if s_nome == s_cargo or s_nome == s_empresa or s_cargo == s_empresa:
         return
 
@@ -47,44 +40,35 @@ def adjust_vertical_centering(slide, missing_fields):
     y_max = max(s_nome.top + s_nome.height, s_cargo.top + s_cargo.height, s_empresa.top + s_empresa.height)
     center_y = y_min + (y_max - y_min) / 2
 
-    # Calcula os espaçamentos originais entre as caixas
-    gap1 = max(0, s_cargo.top - (s_nome.top + s_nome.height))
-    gap2 = max(0, s_empresa.top - (s_cargo.top + s_cargo.height))
-    avg_gap = (gap1 + gap2) / 2  # Usa a média dos espaçamentos
+    # Pega os espaçamentos originais entre as caixas para manter a proporção
+    boxes = [s_nome, s_cargo, s_empresa]
+    boxes.sort(key=lambda s: s.top) # Ordena temporariamente só para pegar o gap real
+    gap1 = max(0, boxes[1].top - (boxes[0].top + boxes[0].height))
+    gap2 = max(0, boxes[2].top - (boxes[1].top + boxes[1].height))
+    avg_gap = (gap1 + gap2) / 2
 
-    # Aplica o novo posicionamento dependendo do que está faltando
-    if "CARGO" in missing_fields and "NOME" not in missing_fields and "EMPRESA" not in missing_fields:
-        # Ficam NOME e EMPRESA
-        total_h = s_nome.height + s_empresa.height + avg_gap
+    # Define a lista de caixas na ORDEM CORRETA (Nome, Cargo, Empresa)
+    remaining = []
+    if "NOME" not in missing_fields: remaining.append(s_nome)
+    if "CARGO" not in missing_fields: remaining.append(s_cargo)
+    if "EMPRESA" not in missing_fields: remaining.append(s_empresa)
+
+    # Aplica o novo posicionamento mantendo o centro
+    if len(remaining) == 3:
+        total_h = s_nome.height + s_cargo.height + s_empresa.height + (2 * avg_gap)
         new_top = int(center_y - (total_h / 2))
         s_nome.top = new_top
-        s_empresa.top = int(new_top + s_nome.height + avg_gap)
+        s_cargo.top = int(new_top + s_nome.height + avg_gap)
+        s_empresa.top = int(new_top + s_nome.height + s_cargo.height + (2 * avg_gap))
 
-    elif "EMPRESA" in missing_fields and "NOME" not in missing_fields and "CARGO" not in missing_fields:
-        # Ficam NOME e CARGO
-        total_h = s_nome.height + s_cargo.height + gap1
+    elif len(remaining) == 2:
+        total_h = remaining[0].height + remaining[1].height + avg_gap
         new_top = int(center_y - (total_h / 2))
-        s_nome.top = new_top
-        s_cargo.top = int(new_top + s_nome.height + gap1)
+        remaining[0].top = new_top
+        remaining[1].top = int(new_top + remaining[0].height + avg_gap)
 
-    elif "NOME" in missing_fields and "CARGO" not in missing_fields and "EMPRESA" not in missing_fields:
-        # Ficam CARGO e EMPRESA
-        total_h = s_cargo.height + s_empresa.height + gap2
-        new_top = int(center_y - (total_h / 2))
-        s_cargo.top = new_top
-        s_empresa.top = int(new_top + s_cargo.height + gap2)
-
-    elif "NOME" in missing_fields and "CARGO" in missing_fields:
-        # Fica só EMPRESA
-        s_empresa.top = int(center_y - (s_empresa.height / 2))
-
-    elif "NOME" in missing_fields and "EMPRESA" in missing_fields:
-        # Fica só CARGO
-        s_cargo.top = int(center_y - (s_cargo.height / 2))
-
-    elif "CARGO" in missing_fields and "EMPRESA" in missing_fields:
-        # Fica só NOME
-        s_nome.top = int(center_y - (s_nome.height / 2))
+    elif len(remaining) == 1:
+        remaining[0].top = int(center_y - (remaining[0].height / 2))
 
 
 def duplicate_slide(presentation, index):
@@ -141,7 +125,7 @@ def substitute_text_in_slide(slide, substituicoes, campos_para_limpar=None, apag
     campos_para_limpar = campos_para_limpar or []
     font_sizes = font_sizes or {}
     
-    # --- NOVO: Ajusta o layout antes de apagar/substituir os textos ---
+    # Força a ordem e centraliza
     adjust_vertical_centering(slide, campos_para_limpar)
 
     chaves_limpar_upper = [c.upper() for c in campos_para_limpar]
@@ -208,7 +192,7 @@ def substitute_text_in_slide(slide, substituicoes, campos_para_limpar=None, apag
 st.set_page_config(page_title="Gerador de Prismas", page_icon="🔷", layout="centered")
 
 st.title("🔷 Gerador de Prismas")
-st.caption("Versão Web 1.5 - Criado por João Carlos")
+st.caption("Versão Web 1.7 - Criado por João Carlos")
 
 st.markdown("---")
 
