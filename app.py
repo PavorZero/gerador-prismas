@@ -12,65 +12,6 @@ from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 # FUNÇÕES AUXILIARES
 # ============================================================
 
-def adjust_vertical_centering(slide, missing_fields):
-    """Força a ordem NOME -> CARGO -> EMPRESA e centraliza no espaço original."""
-    s_nome, s_cargo, s_empresa = None, None, None
-
-    def find_shapes(shapes):
-        nonlocal s_nome, s_cargo, s_empresa
-        for s in shapes:
-            if s.has_text_frame:
-                txt = s.text_frame.text.upper()
-                if "NOME" in txt: s_nome = s
-                if "CARGO" in txt: s_cargo = s
-                if "EMPRESA" in txt: s_empresa = s
-            if s.shape_type == 6:  # GROUP
-                find_shapes(s.shapes)
-
-    find_shapes(slide.shapes)
-
-    # Se não tiver as 3 caixas separadas, não há como forçar a ordem
-    if not (s_nome and s_cargo and s_empresa):
-        return
-    if s_nome == s_cargo or s_nome == s_empresa or s_cargo == s_empresa:
-        return
-
-    # Calcula o centro vertical do bloco original
-    y_min = min(s_nome.top, s_cargo.top, s_empresa.top)
-    y_max = max(s_nome.top + s_nome.height, s_cargo.top + s_cargo.height, s_empresa.top + s_empresa.height)
-    center_y = y_min + (y_max - y_min) / 2
-
-    # Pega os espaçamentos originais entre as caixas para manter a proporção
-    boxes = [s_nome, s_cargo, s_empresa]
-    boxes.sort(key=lambda s: s.top) # Ordena temporariamente só para pegar o gap real
-    gap1 = max(0, boxes[1].top - (boxes[0].top + boxes[0].height))
-    gap2 = max(0, boxes[2].top - (boxes[1].top + boxes[1].height))
-    avg_gap = (gap1 + gap2) / 2
-
-    # Define a lista de caixas na ORDEM CORRETA (Nome, Cargo, Empresa)
-    remaining = []
-    if "NOME" not in missing_fields: remaining.append(s_nome)
-    if "CARGO" not in missing_fields: remaining.append(s_cargo)
-    if "EMPRESA" not in missing_fields: remaining.append(s_empresa)
-
-    # Aplica o novo posicionamento mantendo o centro
-    if len(remaining) == 3:
-        total_h = s_nome.height + s_cargo.height + s_empresa.height + (2 * avg_gap)
-        new_top = int(center_y - (total_h / 2))
-        s_nome.top = new_top
-        s_cargo.top = int(new_top + s_nome.height + avg_gap)
-        s_empresa.top = int(new_top + s_nome.height + s_cargo.height + (2 * avg_gap))
-
-    elif len(remaining) == 2:
-        total_h = remaining[0].height + remaining[1].height + avg_gap
-        new_top = int(center_y - (total_h / 2))
-        remaining[0].top = new_top
-        remaining[1].top = int(new_top + remaining[0].height + avg_gap)
-
-    elif len(remaining) == 1:
-        remaining[0].top = int(center_y - (remaining[0].height / 2))
-
-
 def duplicate_slide(presentation, index):
     source = presentation.slides[index]
     dest = presentation.slides.add_slide(source.slide_layout)
@@ -125,9 +66,6 @@ def substitute_text_in_slide(slide, substituicoes, campos_para_limpar=None, apag
     campos_para_limpar = campos_para_limpar or []
     font_sizes = font_sizes or {}
     
-    # Força a ordem e centraliza
-    adjust_vertical_centering(slide, campos_para_limpar)
-
     chaves_limpar_upper = [c.upper() for c in campos_para_limpar]
 
     def substituir_no_run(run, subs):
@@ -192,7 +130,7 @@ def substitute_text_in_slide(slide, substituicoes, campos_para_limpar=None, apag
 st.set_page_config(page_title="Gerador de Prismas", page_icon="🔷", layout="centered")
 
 st.title("🔷 Gerador de Prismas")
-st.caption("Versão Web 1.7 - Criado por João Carlos")
+st.caption("Versão Web 1.8 - Criado por João Carlos")
 
 st.markdown("---")
 
@@ -230,7 +168,7 @@ with col3:
 
 # --- Configurações de Fonte Separadas ---
 st.markdown("**Configurações de Texto e Layout**")
-apagar_shape_vazio = st.checkbox("Apagar caixa de texto inteira se o campo não for usado", value=False, help="Se desmarcado, a caixa fica vazia, mas o texto que sobrar é centralizado automaticamente.")
+apagar_shape_vazio = st.checkbox("Apagar caixa de texto inteira se o campo não for usado", value=False, help="Remove a caixa de texto caso ela fique vazia após a limpeza.")
 
 font_sizes = {}
 f_col1, f_col2, f_col3 = st.columns(3)
